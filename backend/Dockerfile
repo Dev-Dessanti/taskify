@@ -1,26 +1,46 @@
-# Usa a imagem oficial do Node.js (versão LTS) como base
-FROM node:20-alpine
+# Estágio de construção
+FROM node:20 AS builder
 
-# Define o diretório de trabalho dentro do container
+# Instale o OpenSSL para compatibilidade com Prisma
+RUN apt-get update -y && apt-get install -y openssl
+
+# Defina o diretório de trabalho
 WORKDIR /app
 
-# Copia os arquivos de dependências
+# Copie os arquivos de configuração do npm
 COPY package*.json ./
 
-# Instala as dependências
+# Instale todas as dependências (incluindo devDependencies para build)
 RUN npm install
 
-# Copia o restante do código do backend
+# Copie o restante do código-fonte
 COPY . .
 
-# Compila o TypeScript para JavaScript
+# Gere o Prisma Client e compile o código TypeScript
+RUN npx prisma generate
 RUN npm run build
 
-# Gera o cliente Prisma
-RUN npx prisma generate
+# Estágio de produção
+FROM node:20-slim
 
-# Expõe a porta 3000 (porta padrão do backend)
+# Instale o OpenSSL no estágio de produção
+RUN apt-get update -y && apt-get install -y openssl
+
+# Defina o diretório de trabalho
+WORKDIR /app
+
+# Copie os arquivos necessários do estágio de construção
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/@prisma/client ./node_modules/@prisma/client
+COPY --from=builder /app/prisma ./prisma
+
+# Instale apenas as dependências de produção
+RUN npm install --omit=dev
+
+# Exponha a porta da aplicação
 EXPOSE 3000
 
-# Comando para iniciar o backend
-CMD ["npm", "run", "start:prod"]
+# Defina o comando para iniciar a aplicação
+CMD ["node", "dist/src/main.js"]
